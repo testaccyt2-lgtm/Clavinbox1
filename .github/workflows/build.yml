@@ -13,6 +13,46 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Auto-extract the source zip if the repo holds it as a .zip
+        run: |
+          set -e
+          # If gradlew already exists at root, the project is already unpacked — nothing to do.
+          if [ -f "gradlew" ]; then
+            echo "gradlew found at repo root — source is already extracted, skipping."
+            exit 0
+          fi
+
+          ZIP_FILE=$(find . -maxdepth 2 -iname "*.zip" | head -n1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::No gradlew at root and no .zip file found in the repo. Nothing to build."
+            exit 1
+          fi
+          echo "Found zip: $ZIP_FILE"
+
+          WORKDIR=$(mktemp -d)
+          unzip -q "$ZIP_FILE" -d "$WORKDIR"
+
+          # If the zip extracted into a single wrapping folder (e.g. NewBlackbox-main/),
+          # treat that folder's contents as the real project root.
+          ENTRIES=$(find "$WORKDIR" -mindepth 1 -maxdepth 1 | wc -l)
+          if [ "$ENTRIES" -eq 1 ] && [ -d "$(find "$WORKDIR" -mindepth 1 -maxdepth 1)" ]; then
+            SRC_ROOT=$(find "$WORKDIR" -mindepth 1 -maxdepth 1)
+            echo "Flattening wrapper folder: $SRC_ROOT"
+          else
+            SRC_ROOT="$WORKDIR"
+          fi
+
+          # Copy the extracted project over the repo checkout, without touching .github
+          # (so this workflow file itself isn't overwritten mid-run) or the zip itself.
+          rsync -a --exclude='.github' "$SRC_ROOT"/ ./
+
+          if [ ! -f "gradlew" ]; then
+            echo "::error::Extraction finished but gradlew still not found at root. Check the zip's internal folder structure."
+            find . -maxdepth 2
+            exit 1
+          fi
+          echo "Extraction complete, gradlew found at repo root."
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
